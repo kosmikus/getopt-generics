@@ -297,6 +297,24 @@ class Typeable a => Option a where
   _accumulate :: a -> a -> a
   _accumulate _ x = x
 
+  -- | This is meant to be an internal function.
+  _argumentTypeList :: Proxy [a] -> String
+  _argumentTypeList Proxy = argumentType (Proxy :: Proxy a) ++ " (multiple possible)"
+
+  -- | This is meant to be an internal function.
+  _parseArgumentList :: String -> Maybe [a]
+  _parseArgumentList x = case parseArgument x of
+    Just (x :: a) -> Just [x]
+    Nothing -> Nothing
+
+  -- | This is meant to be an internal function.
+  _emptyOptionList :: String -> FieldState [a]
+  _emptyOptionList _ = FieldSuccess []
+
+  -- | This is meant to be an internal function.
+  _accumulateList :: [a] -> [a] -> [a]
+  _accumulateList = (++)
+
 parseAsFieldState :: forall a . Option a => String -> FieldState a
 parseAsFieldState s = case parseArgument s of
   Just a -> FieldSuccess a
@@ -320,36 +338,30 @@ instance Option Bool where
   _toOption = NoArg (FieldSuccess True)
   _emptyOption _ = FieldSuccess False
 
-instance Option String where
-  argumentType _ = "string"
-  parseArgument = Just
+instance Option a => Option [a] where
+  argumentType Proxy = _argumentTypeList (Proxy :: Proxy [a])
+  parseArgument = _parseArgumentList
+  _emptyOption = _emptyOptionList
+  _accumulate = _accumulateList
 
-instance Option (Maybe String) where
-  argumentType _ = "string (optional)"
-  parseArgument = Just . Just
+instance Option a => Option (Maybe a) where
+  argumentType Proxy = argumentType (Proxy :: Proxy a) ++ " (optional)"
+  parseArgument x = case parseArgument x of
+    Just (x :: a) -> Just (Just x)
+    Nothing -> Nothing
   _emptyOption _ = FieldSuccess Nothing
 
-instance Option [String] where
-  argumentType _ = "string (multiple possible)"
-  parseArgument = Just . pure
-  _emptyOption _ = FieldSuccess []
-  _accumulate = (++)
+instance Option Char where
+  argumentType Proxy = "char"
+  parseArgument s = case s of
+    [c] -> Just c
+    _ -> Nothing
+  _argumentTypeList Proxy = "string"
+  _parseArgumentList x = Just x
+  _emptyOptionList flagName = Unset
+    ("missing option: --" ++ flagName ++ "=" ++ argumentType (Proxy :: Proxy String))
+  _accumulateList _ x = x
 
 instance Option Int where
   argumentType _ = "integer"
   parseArgument = readMaybe
-
-instance Option (Maybe Int) where
-  argumentType _ = "integer (optional)"
-  parseArgument s = case readMaybe s of
-    Just i -> Just (Just i)
-    Nothing -> Nothing
-  _emptyOption _ = FieldSuccess Nothing
-
-instance Option [Int] where
-  argumentType _ = "integer (multiple possible)"
-  parseArgument s = case readMaybe s of
-    Just a -> Just [a]
-    Nothing -> Nothing
-  _emptyOption _ = FieldSuccess []
-  _accumulate = (++)
