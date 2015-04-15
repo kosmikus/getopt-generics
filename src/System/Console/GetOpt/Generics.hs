@@ -41,7 +41,7 @@ import           Control.Monad (when)
 import           Data.Char
 import           Data.List
 import           Data.Maybe
-import           Data.Typeable
+import           Data.Typeable (Typeable, cast, gcast, typeOf)
 import           Generics.SOP
 import           System.Console.GetOpt.Compat
 import           System.Environment
@@ -185,8 +185,8 @@ mkInitialFieldStates modifiers fields = case (sing :: Sing xs, fields) of
   inner :: forall x . Option x => String -> Result (FieldState x)
   inner name = if isPositionalArgumentsField modifiers name
     then case cast (id :: FieldState x -> FieldState x) of
-      (Just id' :: Maybe (FieldState [String] -> FieldState x)) ->
-        return $ id' PositionalArguments
+      (Just convert :: Maybe (FieldState [String] -> FieldState x)) ->
+        return $ convert PositionalArguments
       Nothing -> Errors
         ["UseForPositionalArguments can only be used " ++
          "for fields of type [String] not " ++
@@ -320,36 +320,51 @@ instance Option Bool where
   _toOption = NoArg (FieldSuccess True)
   _emptyOption _ = FieldSuccess False
 
-instance Option String where
-  argumentType _ = "string"
-  parseArgument = Just
+instance Option a => Option [a] where
+  argumentType proxy =
+    case cast proxy of
+      Just (_ :: Proxy String) -> argumentType (Proxy :: Proxy WrappedString)
+      Nothing -> argumentType (Proxy :: Proxy a) ++ " (multiple possible)"
+  parseArgument x = case gcast id :: Maybe (String -> [a]) of
+    Just convert -> fmap (convert . unwrapString) $ parseArgument x
+    Nothing -> case parseArgument x of
+      Just (x :: a) -> Just [x]
+      Nothing -> Nothing
+  _emptyOption fieldName = case gcast id :: Maybe (String -> [a]) of
+    Just convert -> case (_emptyOption fieldName :: FieldState WrappedString) of
+      Unset x -> Unset x
+      ParseErrors errs -> ParseErrors errs
+      FieldSuccess x -> FieldSuccess $ convert $ unwrapString x
+      _ -> uninhabited "Option [a]"
+    Nothing -> FieldSuccess []
+  _accumulate = case (gcast id, gcast id) :: (Maybe ([a] -> String), Maybe (String -> [a])) of
+    (Just to, Just from) -> \ a b -> from $ unwrapString $
+      WrappedString (to a) `_accumulate` WrappedString (to b)
+    _ -> (++)
 
-instance Option (Maybe String) where
-  argumentType _ = "string (optional)"
-  parseArgument = Just . Just
+instance Option a => Option (Maybe a) where
+  argumentType Proxy = argumentType (Proxy :: Proxy a) ++ " (optional)"
+  parseArgument x = case parseArgument x of
+    Just (x :: a) -> Just (Just x)
+    Nothing -> Nothing
   _emptyOption _ = FieldSuccess Nothing
 
-instance Option [String] where
-  argumentType _ = "string (multiple possible)"
-  parseArgument = Just . pure
-  _emptyOption _ = FieldSuccess []
-  _accumulate = (++)
+newtype WrappedString
+  = WrappedString {
+    unwrapString :: String
+  }
+  deriving (Typeable)
+
+instance Option WrappedString where
+  argumentType Proxy = "string"
+  parseArgument = Just . WrappedString
+
+instance Option Char where
+  argumentType Proxy = "char"
+  parseArgument x = case x of
+    [c] -> Just c
+    _ -> Nothing
 
 instance Option Int where
-  argumentType _ = "integer"
+  argumentType Proxy = "integer"
   parseArgument = readMaybe
-
-instance Option (Maybe Int) where
-  argumentType _ = "integer (optional)"
-  parseArgument s = case readMaybe s of
-    Just i -> Just (Just i)
-    Nothing -> Nothing
-  _emptyOption _ = FieldSuccess Nothing
-
-instance Option [Int] where
-  argumentType _ = "integer (multiple possible)"
-  parseArgument s = case readMaybe s of
-    Just a -> Just [a]
-    Nothing -> Nothing
-  _emptyOption _ = FieldSuccess []
-  _accumulate = (++)
